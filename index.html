@@ -1,27 +1,33 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Cataloger</title>
+  <title>MARC21 Cataloging Assistant</title>
 </head>
 <body>
-  <h2>Upload PDF or TXT</h2>
+  <h2>📘 Upload PDF or TXT</h2>
   <input type="file" id="fileInput" />
   <button onclick="upload()">📤 Upload</button>
+
+  <h3>📝 MARC Record Editor</h3>
   <pre id="editor" contenteditable="true" style="white-space: pre-wrap; background: #f8f8f8; padding: 10px; border: 1px solid #ccc;"></pre>
-  <button onclick="downloadTextFile('record.mrk', document.getElementById('editor').textContent)">💾 Save .mrk</button>
+
+  <button onclick="downloadTextFile('record.mrk', document.getElementById('editor').textContent)">💾 Save as .mrk</button>
 
   <script>
     async function upload() {
       const fileInput = document.getElementById("fileInput");
       const file = fileInput.files[0];
+      if (!file) return alert("Please select a file.");
+
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("https://htmlat-api.onrender.com/extract", {
+
+      const res = await fetch("https://htmlat3-api.onrender.com/extract", {
         method: "POST",
         body: formData
       });
+
       const data = await res.json();
       document.getElementById("editor").textContent = data.mrk || data.error || "Error.";
     }
