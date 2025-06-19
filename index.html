@@ -2,24 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>MARC21 Cataloging Assistant</title>
+  <title>📘 MARC21 Cataloger</title>
 </head>
 <body>
-  <h2>📘 Upload PDF or TXT</h2>
+  <h2>Upload PDF or TXT</h2>
   <input type="file" id="fileInput" />
   <button onclick="upload()">📤 Upload</button>
-
-  <h3>📝 MARC Record Editor</h3>
   <pre id="editor" contenteditable="true" style="white-space: pre-wrap; background: #f8f8f8; padding: 10px; border: 1px solid #ccc;"></pre>
-
-  <button onclick="downloadTextFile('record.mrk', document.getElementById('editor').textContent)">💾 Save as .mrk</button>
+  <br />
+  <button onclick="downloadFile('record.mrk', 'text/plain')">💾 Export .mrk</button>
+  <button onclick="downloadFile('record.xml', 'application/xml')">🧾 Export .xml</button>
+  <button onclick="downloadFile('record.json', 'application/json')">📄 Export .json</button>
 
   <script>
     async function upload() {
       const fileInput = document.getElementById("fileInput");
       const file = fileInput.files[0];
-      if (!file) return alert("Please select a file.");
-
       const formData = new FormData();
       formData.append("file", file);
 
@@ -29,11 +27,19 @@
       });
 
       const data = await res.json();
-      document.getElementById("editor").textContent = data.mrk || data.error || "Error.";
+      window.record = data;  // Save the whole response for export
+      document.getElementById("editor").textContent =
+        data.mrk || data.error || "❌ Error occurred.";
     }
 
-    function downloadTextFile(filename, text) {
-      const blob = new Blob([text], { type: 'text/plain' });
+    function downloadFile(filename, mime) {
+      if (!window.record) return alert("⚠️ No record loaded.");
+      let text = '';
+      if (filename.endsWith('.mrk')) text = window.record.mrk;
+      if (filename.endsWith('.xml')) text = window.record.xml;
+      if (filename.endsWith('.json')) text = JSON.stringify(window.record.json, null, 2);
+
+      const blob = new Blob([text], { type: mime });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = filename;
