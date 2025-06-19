@@ -1,50 +1,243 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>📘 MARC21 Cataloger</title>
+  <meta charset="UTF-8">
+  <title>MARC21 Cataloger - Multi Upload + Drag & Drop</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #f4f4f4;
+      margin: 20px;
+    }
+    input[type="file"], input[type="text"], button {
+      padding: 12px;
+      font-size: 16px;
+      margin: 10px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      display: block;
+    }
+    #dropZone {
+      border: 2px dashed #aaa;
+      background: #fff;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      font-size: 18px;
+      color: #666;
+      margin-bottom: 20px;
+      cursor: pointer;
+    }
+    #dropZone.hover {
+      border-color: #007bff;
+      background: #e9f5ff;
+    }
+    #output, #editor {
+      white-space: pre-wrap;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 8px;
+      font-size: 16px;
+      line-height: 1.6;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    #editor {
+      min-height: 200px;
+    }
+  </style>
+  <script src="https://unpkg.com/compromise"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
 </head>
 <body>
-  <h2>Upload PDF or TXT</h2>
-  <input type="file" id="fileInput" />
-  <button onclick="upload()">📤 Upload</button>
-  <pre id="editor" contenteditable="true" style="white-space: pre-wrap; background: #f8f8f8; padding: 10px; border: 1px solid #ccc;"></pre>
-  <br />
-  <button onclick="downloadFile('record.mrk', 'text/plain')">💾 Export .mrk</button>
-  <button onclick="downloadFile('record.xml', 'application/xml')">🧾 Export .xml</button>
-  <button onclick="downloadFile('record.json', 'application/json')">📄 Export .json</button>
 
-  <script>
-    async function upload() {
-      const fileInput = document.getElementById("fileInput");
-      const file = fileInput.files[0];
-      const formData = new FormData();
-      formData.append("file", file);
+<h2>📘 Multi-file MARC21 Cataloger</h2>
+<input type="file" id="fileInput" multiple accept=".pdf,.txt">
+<div id="dropZone">📂 Drag and drop PDF or TXT files here</div>
+<div id="output">📂 Upload or drop files to begin.</div>
 
-      const res = await fetch("https://htmlat3-api.onrender.com/extract", {
-        method: "POST",
-        body: formData
-      });
+<h3>📝 Editor</h3>
+<pre id="editor" contenteditable="true"></pre>
+<button onclick="saveToDatabase()">📏 Save to Database</button>
 
-      const data = await res.json();
-      window.record = data;  // Save the whole response for export
-      document.getElementById("editor").textContent =
-        data.mrk || data.error || "❌ Error occurred.";
+<button onclick="downloadRecord('mrc')">💾 Download .mrk</button>
+<button onclick="downloadRecord('json')">📄 Download .json</button>
+<button onclick="downloadRecord('xml')">🧾 Download .xml</button>
+
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('hover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('hover');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function cleanText(text) {
+  return text.replace(/\s+/g, ' ').replace(/[\x00-\x1F\x7F]/g, '').trim();
+}
+
+async function handleFiles(fileList) {
+  const output = [];
+  for (const file of fileList) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    let text = '';
+    if (ext === 'pdf') {
+      text = await extractFromPDF(file);
+    } else {
+      text = await extractFromTXT(file);
     }
+    const isSerial = detectSerial(text);
+    const metadata = extractMetadata(text);
+    const marc = isSerial ? buildSerialMARC(metadata) : buildBookMARC(metadata);
+    output.push(marc);
+  }
+  const allText = output.join('\n---\n');
+  document.getElementById('output').textContent = allText;
+  document.getElementById('editor').textContent = allText;
+}
 
-    function downloadFile(filename, mime) {
-      if (!window.record) return alert("⚠️ No record loaded.");
+function detectSerial(text) {
+  return /volume|vol\.|issue|quarterly|monthly|journal|revue|periodical|issn/i.test(text);
+}
+
+async function extractFromTXT(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsText(file);
+  });
+}
+
+async function extractFromPDF(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = async function () {
+      const typedArray = new Uint8Array(this.result);
+      const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
       let text = '';
-      if (filename.endsWith('.mrk')) text = window.record.mrk;
-      if (filename.endsWith('.xml')) text = window.record.xml;
-      if (filename.endsWith('.json')) text = JSON.stringify(window.record.json, null, 2);
+      for (let i = 1; i <= Math.min(pdf.numPages, 20); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map(item => item.str).join(' ') + '\n';
+      }
+      resolve(text);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
 
-      const blob = new Blob([text], { type: mime });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-    }
-  </script>
+function extractMetadata(text) {
+  const nlpDoc = nlp(text);
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const paras = text.split(/\n\n+/);
+  let summary = cleanText(paras.reduce((a, b) => b.length > a.length ? b : a, '').slice(0, 300));
+  let title = cleanText(summary.length > 20 ? summary.split(/[.!?]/)[0] : 'Unknown Title');
+  let author = cleanText(
+    lines.find(l => /^author[:\-\u2013]/i.test(l))?.split(/[:\-\u2013]/)[1]?.trim()
+    || nlpDoc.people().out('text').split(',')[0] || 'Unknown Author'
+  );
+  const people = nlpDoc.people().out('array').filter(p => !p.includes(author));
+  const coauthors = [...new Set(people.map(cleanText))].slice(0, 3);
+  let year = (text.match(/\b(1[89]|20)\d{2}\b/) || [])[0] || 'Unknown Year';
+  let isbn = cleanText((text.match(/isbn[:\s]*([\d\-]+)/i) || [])[1] || '');
+  let issn = cleanText((text.match(/issn[:\s]*([\d\-]+)/i) || [])[1] || '');
+  let publisher = cleanText((text.match(/publisher[:\-\u2013]?\s*(.+)/i) || [])[1] || '[Publisher not found]');
+  return { title, author, year, isbn, issn, publisher, summary, coauthors };
+}
+
+function buildBookMARC({ title, author, year, isbn, publisher, summary, coauthors }) {
+  const now = new Date();
+  const controlDate = now.toISOString().replace(/[-T:.Z]/g, '').slice(0, 14);
+  const todayShort = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const coauthorFields = coauthors.map(name => `=700 1#$a${name},$econtributor.`).join("\n");
+  return `=LDR  00000nam a2200000 a 4500
+=001  000000001
+=005  ${controlDate}.0
+=008  ${todayShort}s${year}\\xx\\eng\\d
+=020  ##$a${isbn || '[ISBN not found]'}
+=041  0#$aar
+=100  1#$a${author}.
+=245  10$a${title} /$c${author}.
+=246  3#$a${title.split(' ').slice(0, 4).join(' ')}
+=250  ##$aFirst edition.
+=264  _1$a[Place not identified] :$b${publisher},$c${year}.
+=300  ##$a300 pages :$bill. ;$c24 cm.
+=336  ##$atext$btxt$2rdacontent
+=337  ##$aunmediated$bn$2rdamedia
+=338  ##$avolume$bnc$2rdacarrier
+=500  ##$aCataloged using automated extraction.
+=520  ##$a${summary || '[No summary found]'}
+=546  ##$aText in Arabic.
+=650  #0$a${title.split(' ')[0] || 'General'}$xCriticism and interpretation.
+${coauthorFields}`;
+}
+
+function buildSerialMARC(metadata) {
+  return buildBookMARC(metadata); // Placeholder: You can define a different structure if needed.
+}
+
+function saveToDatabase() {
+  const record = document.getElementById("editor").textContent.trim();
+  if (!record) return alert("⚠️ No MARC record to save.");
+  const key = "marc_" + Date.now();
+  localStorage.setItem(key, record);
+  alert("✅ Record saved to database.");
+  document.getElementById("editor").textContent = "";
+}
+</script>
+
+
+<script>
+function downloadRecord(format) {
+  const content = document.getElementById("editor").textContent.trim();
+  if (!content) return alert("⚠️ No MARC record to download.");
+  let blob;
+  let filename = (format === 'mrc') ? 'marc_record.mrk' : 'marc_record.' + format;
+
+  if (format === "json") {
+    const lines = content.split("\n");
+    const json = lines.map(line => {
+      const tag = line.substring(1, 4);
+      const value = line.substring(6);
+      return { tag, value };
+    });
+    blob = new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
+  } else if (format === "xml") {
+    const lines = content.split("\n");
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<record>\n` +
+      lines.map(line => {
+        const tag = line.substring(1, 4);
+        const value = line.substring(6).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `  <field tag="${tag}">${value}</field>`;
+      }).join("\n") +
+      `\n</record>`;
+    blob = new Blob([xml], { type: "application/xml" });
+  } else {
+    blob = new Blob([content], { type: "text/plain" }); // .mrc or fallback
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+</script>
+
 </body>
 </html>
